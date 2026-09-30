@@ -1,11 +1,14 @@
 import Link from "next/link";
-import { createAiSession } from "@/app/(app)/ai/actions";
+import { CircleAlert } from "lucide-react";
 import { AiWorkspace } from "@/app/(app)/ai/workspace";
+import { DataAlert } from "@/components/data-alert";
+import { SessionList } from "@/components/session-list";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
+import { Alert, AlertAction, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { ensureAppUser } from "@/lib/auth/current-user";
-import { listSessions } from "@/lib/ai/sessions";
+import { getOwnedSession, listSessionMessages, listSessions } from "@/lib/ai/sessions";
 import { captureException } from "@/lib/monitoring/sentry";
+import { formatActivityTime, toInitialMessages, type InitialChatMessage, type SessionListItem } from "@/lib/ui/workspace";
 
 export const metadata = { title: "AI workspace" };
 
@@ -15,14 +18,32 @@ export default async function AiPage({
   searchParams: Promise<{ session?: string }>;
 }) {
   const params = await searchParams;
-  const sessionId = Array.isArray(params.session) ? params.session[0] : params.session;
+  const requestedId = Array.isArray(params.session) ? params.session[0] : params.session;
   const user = await ensureAppUser();
-  let sessions: Awaited<ReturnType<typeof listSessions>> = [];
+  let sessions: SessionListItem[] = [];
+  let initialMessages: InitialChatMessage[] = [];
+  let activeSessionId: string | undefined;
+  let missingSession = false;
   let dbError: string | null = null;
 
   if (user) {
     try {
-      sessions = await listSessions(user.id);
+      const rows = await listSessions(user.id);
+      sessions = rows.map((session) => ({
+        id: session.id,
+        title: session.title,
+        updatedLabel: formatActivityTime(session.updatedAt),
+      }));
+
+      if (requestedId) {
+        const owned = rows.find((session) => session.id === requestedId) ?? (await getOwnedSession(user.id, requestedId));
+        if (!owned) {
+          missingSession = true;
+        } else {
+          activeSessionId = owned.id;
+          initialMessages = toInitialMessages(await listSessionMessages(owned.id));
+        }
+      }
     } catch (error) {
       dbError = "Database is unavailable. Start Postgres and run migrations.";
       captureException(error, { page: "ai" });
@@ -30,33 +51,37 @@ export default async function AiPage({
   }
 
   return (
-    <div className="mx-auto grid w-full max-w-6xl gap-6 lg:grid-cols-[240px_minmax(0,1fr)]">
-      <section className="space-y-4">
-        <div>
-          <h1 className="text-2xl font-semibold tracking-tight">AI workspace</h1>
-          <p className="mt-1 text-sm text-muted-foreground">Sessions live in Postgres.</p>
+    <div className="flex min-h-[32rem] flex-1 flex-col gap-4">
+      <div>
+        <h1 className="text-2xl font-semibold tracking-tight">AI workspace</h1>
+        <p className="mt-1 text-sm text-muted-foreground">Sessions stay on this account.</p>
+      </div>
+      {dbError ? <DataAlert message={dbError} /> : null}
+      {missingSession ? (
+        <Alert>
+          <CircleAlert />
+          <AlertTitle>Session not found</AlertTitle>
+          <AlertDescription>That session is not on this account.</AlertDescription>
+          <AlertAction>
+            <Button nativeButton={false} size="xs" variant="outline" render={<Link href="/ai" />}>
+              Back to workspace
+            </Button>
+          </AlertAction>
+        </Alert>
+      ) : null}
+      {dbError ? null : (
+        <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-lg border border-border bg-surface lg:flex-row">
+          <aside className="flex h-72 w-full shrink-0 flex-col border-b border-border lg:h-auto lg:w-[240px] lg:border-r lg:border-b-0">
+            <SessionList sessions={sessions} activeId={activeSessionId} />
+          </aside>
+          <AiWorkspace
+            key={activeSessionId ?? "none"}
+            sessionId={activeSessionId}
+            initialMessages={initialMessages}
+            hasSessions={sessions.length > 0}
+          />
         </div>
-        <form action={createAiSession} className="flex flex-col gap-2">
-          <Input name="title" placeholder="Session title" />
-          <Button type="submit" variant="secondary">
-            New session
-          </Button>
-        </form>
-        {dbError ? <p className="text-sm text-muted-foreground">{dbError}</p> : null}
-        <ul className="space-y-1">
-          {sessions.map((session) => (
-            <li key={session.id}>
-              <Link
-                href={`/ai?session=${session.id}`}
-                className="block truncate rounded-md px-3 py-2 text-sm text-muted-foreground hover:bg-elevated hover:text-foreground"
-              >
-                {session.title}
-              </Link>
-            </li>
-          ))}
-        </ul>
-      </section>
-      <AiWorkspace sessionId={sessionId} />
+      )}
     </div>
   );
 }

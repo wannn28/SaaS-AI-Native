@@ -1,7 +1,9 @@
 "use client";
 
 import { useState } from "react";
+import { CircleAlert } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 
 export function BillingActions({ hasCustomer }: { hasCustomer: boolean }) {
   const [error, setError] = useState<string | null>(null);
@@ -40,7 +42,13 @@ export function BillingActions({ hasCustomer }: { hasCustomer: boolean }) {
           {pending === "portal" ? "Opening portal…" : "Customer portal"}
         </Button>
       </div>
-      {error ? <p className="text-sm text-muted-foreground">{error}</p> : null}
+      {error ? (
+        <Alert variant="destructive">
+          <CircleAlert />
+          <AlertTitle>Billing request failed</AlertTitle>
+          <AlertDescription>{error}</AlertDescription>
+        </Alert>
+      ) : null}
     </div>
   );
 }
